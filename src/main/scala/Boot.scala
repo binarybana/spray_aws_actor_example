@@ -23,7 +23,6 @@ import awscala._, s3._
 
 import akka.agent.Agent
 
-// implicit val s3 = S3()
 
 
 
@@ -45,23 +44,21 @@ class MyCompute extends Actor with ActorLogging {
   }
 }
 
-class MyHttpService(val dataService:ActorRef) extends HttpServiceActor {
+class MyHttpService(val dataService:Agent[String]) extends HttpServiceActor {
 
   implicit val timeout = Timeout(1 seconds)
   import context.dispatcher
   def receive = runRoute {
     path("ping") {
       get {
-        complete {
-          (dataService ? "retrieve").map(_.toString).mapTo[String]
-        }
+        complete(dataService.get)
       }
     } ~
     path("compute") {
-      post {
+      get {
         complete {
-          dataService ! "compute"
-          "computing.."
+          dataService.sendOff(Boot.longCompute)
+          "should be going..."
         }
       }
     }
@@ -72,11 +69,27 @@ object Boot extends App {
   implicit val system = ActorSystem("spray-sample-system")
   import system.dispatcher
   implicit val timeout = Timeout(1 seconds)
+  implicit val s3 = S3()
 
+  def longCompute(x:String):String = {
+    // Get stuff from S3
+    val bucket = s3.bucket("jknight-testb").get
+    val s3obj = bucket.getObject("sample.txt")
+    // System.nanoTime.toString + scala.io.Source.fromInputStream(s3obj.get.content).mkString
+    System.nanoTime.toString + (s3.ls(bucket, "") foreach {x => println(x.get)}
+  }
+    
   /* Use Akka to create our Spray Service */
   val dataService = system.actorOf(Props[MyCompute], name="MyCompute")
-  val httpService = system.actorOf(Props(classOf[MyHttpService], dataService), name="MyRouter")
+  val glommedJSON = Agent("init val")
+  val httpService = system.actorOf(Props(classOf[MyHttpService], glommedJSON), name="MyRouter")
   // val cancellable = system.scheduler.schedule(0 milliseconds, 100 milliseconds, dataService, "compute")
+  //
+  // def testFun:Unit = {
+
+  val cancellable = system.scheduler.schedule(0 milliseconds, 5000 milliseconds){
+    glommedJSON.sendOff(longCompute)
+  }
 
   /* and bind to Akka's I/O interface */
   IO(Http) ? Http.Bind(httpService, system.settings.config.getString("app.interface"), system.settings.config.getInt("app.port"))
