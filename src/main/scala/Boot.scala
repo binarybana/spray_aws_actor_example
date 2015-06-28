@@ -18,31 +18,10 @@ import spray.can.server.Stats
 import spray.http.StatusCodes._
 import scala.concurrent.Future
 import akka.actor.ActorRef
+import akka.agent.Agent
 
 import awscala._, s3._
 
-import akka.agent.Agent
-
-
-
-
-class MyCompute extends Actor with ActorLogging {
-  var myvar = 1.0
-  log.info("Created new MyCompute Actor")
-  import context.dispatcher // implicit Execution context for futures
-
-  // def compute() = this.synchronized { Thread.sleep(3000); myvar += 1.0 }
-  def compute() = { Thread.sleep(3000); myvar += 1.0 }
-
-  def receive = {
-    case "compute" => {
-      Future(compute())
-    }
-    case "retrieve" => { 
-      sender ! myvar 
-    }
-  }
-}
 
 class MyHttpService(val dataService:Agent[String]) extends HttpServiceActor {
 
@@ -75,17 +54,14 @@ object Boot extends App {
     // Get stuff from S3
     val bucket = s3.bucket("jknight-testb").get
     val s3obj = bucket.getObject("sample.txt")
-    // System.nanoTime.toString + scala.io.Source.fromInputStream(s3obj.get.content).mkString
-    System.nanoTime.toString + (s3.ls(bucket, "") foreach {x => println(x.get)}
+    System.nanoTime.toString + (s3.ls(bucket, "").toSeq.map { 
+      case Left(s) => "\nstring: " + x
+      case Right(o) => s"\nobject:\n key:${o.getKey}\n size:${o.getSize}\n storageClass:${o.getStorageClass}\n eTag:${o.getETag}\n lastModified:${o.getLastModified}"
+    }).mkString("\n")
   }
     
-  /* Use Akka to create our Spray Service */
-  val dataService = system.actorOf(Props[MyCompute], name="MyCompute")
   val glommedJSON = Agent("init val")
   val httpService = system.actorOf(Props(classOf[MyHttpService], glommedJSON), name="MyRouter")
-  // val cancellable = system.scheduler.schedule(0 milliseconds, 100 milliseconds, dataService, "compute")
-  //
-  // def testFun:Unit = {
 
   val cancellable = system.scheduler.schedule(0 milliseconds, 5000 milliseconds){
     glommedJSON.sendOff(longCompute)
